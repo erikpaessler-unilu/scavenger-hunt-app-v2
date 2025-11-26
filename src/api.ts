@@ -1,7 +1,7 @@
 // API configuration
 const API_BASE_URL = import.meta.env.VITE_API_URL || 
   (import.meta.env.MODE === 'production' 
-    ? 'https://your-app.railway.app/api'
+    ? 'https://scavenger-hunt-backend-production.up.railway.app/api'
     : 'http://localhost:3000/api');
 
 // Helper function for API calls
