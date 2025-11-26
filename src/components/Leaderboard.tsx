@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Trophy, Medal, Award, ArrowLeft } from 'lucide-react';
+import { leaderboardAPI } from '../api';
 
 export interface LeaderboardEntry {
   name: string;
   score: number;
   completionTime: number; // in seconds
+  completion_time?: number; // backend uses snake_case
   timestamp: number;
 }
 
@@ -20,25 +22,41 @@ export function Leaderboard({ currentScore, completionTime, onBack, showSubmitFo
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [playerName, setPlayerName] = useState('');
   const [hasSubmitted, setHasSubmitted] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     loadLeaderboard();
   }, []);
 
-  const loadLeaderboard = () => {
-    const stored = localStorage.getItem('questfinder_leaderboard');
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      // Sort by score (descending), then by time (ascending)
-      parsed.sort((a: LeaderboardEntry, b: LeaderboardEntry) => {
-        if (b.score !== a.score) return b.score - a.score;
-        return a.completionTime - b.completionTime;
-      });
-      setEntries(parsed);
+  const loadLeaderboard = async () => {
+    try {
+      setIsLoading(true);
+      const data = await leaderboardAPI.getAll();
+      // Normalize the data (backend uses completion_time, frontend uses completionTime)
+      const normalized = data.map((entry: any) => ({
+        ...entry,
+        completionTime: entry.completion_time || entry.completionTime
+      }));
+      setEntries(normalized);
+    } catch (err) {
+      console.error('Failed to load leaderboard:', err);
+      // Fallback to localStorage if API fails
+      const stored = localStorage.getItem('questfinder_leaderboard');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        parsed.sort((a: LeaderboardEntry, b: LeaderboardEntry) => {
+          if (b.score !== a.score) return b.score - a.score;
+          return a.completionTime - b.completionTime;
+        });
+        setEntries(parsed);
+      }
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!playerName.trim()) {
       alert('Please enter your name');
       return;
@@ -46,29 +64,24 @@ export function Leaderboard({ currentScore, completionTime, onBack, showSubmitFo
 
     if (currentScore === undefined || completionTime === undefined) return;
 
-    const newEntry: LeaderboardEntry = {
-      name: playerName.trim(),
-      score: currentScore,
-      completionTime,
-      timestamp: Date.now()
-    };
+    try {
+      setIsSubmitting(true);
+      
+      await leaderboardAPI.submit({
+        name: playerName.trim(),
+        score: currentScore,
+        completionTime: completionTime
+      });
 
-    const stored = localStorage.getItem('questfinder_leaderboard');
-    const existing = stored ? JSON.parse(stored) : [];
-    existing.push(newEntry);
-    
-    // Sort by score (descending), then by time (ascending)
-    existing.sort((a: LeaderboardEntry, b: LeaderboardEntry) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return a.completionTime - b.completionTime;
-    });
-
-    // Keep top 100
-    const trimmed = existing.slice(0, 100);
-    localStorage.setItem('questfinder_leaderboard', JSON.stringify(trimmed));
-    
-    setEntries(trimmed);
-    setHasSubmitted(true);
+      // Reload leaderboard to show new entry
+      await loadLeaderboard();
+      setHasSubmitted(true);
+    } catch (err) {
+      console.error('Failed to submit score:', err);
+      alert('Failed to submit score. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const formatTime = (seconds: number) => {
@@ -139,18 +152,27 @@ export function Leaderboard({ currentScore, completionTime, onBack, showSubmitFo
                 type="text"
                 value={playerName}
                 onChange={(e) => setPlayerName(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSubmit()}
+                onKeyPress={(e) => e.key === 'Enter' && !isSubmitting && handleSubmit()}
                 placeholder="Enter your name"
-                maxLength={20}
-                className="flex-1 p-3 border-2 border-green-300 rounded-xl focus:border-green-500 focus:outline-none transition-colors"
+                maxLength={50}
+                disabled={isSubmitting}
+                className="flex-1 p-3 border-2 border-green-300 rounded-xl focus:border-green-500 focus:outline-none transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed"
               />
               <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
+                whileHover={{ scale: isSubmitting ? 1 : 1.02 }}
+                whileTap={{ scale: isSubmitting ? 1 : 0.98 }}
                 onClick={handleSubmit}
-                className="px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-xl hover:from-green-600 hover:to-emerald-600 transition-all shadow-lg"
+                disabled={isSubmitting}
+                className="px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-xl hover:from-green-600 hover:to-emerald-600 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
-                Submit to Leaderboard
+                {isSubmitting ? (
+                  <>
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                    Submitting...
+                  </>
+                ) : (
+                  'Submit to Leaderboard'
+                )}
               </motion.button>
             </div>
           </motion.div>
@@ -173,7 +195,12 @@ export function Leaderboard({ currentScore, completionTime, onBack, showSubmitFo
           transition={{ delay: 0.1 }}
           className="bg-white rounded-2xl shadow-lg overflow-hidden border-2 border-orange-300"
         >
-          {entries.length === 0 ? (
+          {isLoading ? (
+            <div className="p-12 text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4"></div>
+              <p className="text-gray-600">Loading leaderboard...</p>
+            </div>
+          ) : entries.length === 0 ? (
             <div className="p-12 text-center">
               <Trophy className="w-16 h-16 text-gray-300 mx-auto mb-4" />
               <h3 className="text-gray-400 mb-2">No entries yet</h3>

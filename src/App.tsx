@@ -6,6 +6,7 @@ import { HuntPlayer, type UserAnswer } from './components/HuntPlayer';
 import { HuntCreator } from './components/HuntCreator';
 import { Leaderboard } from './components/Leaderboard';
 import { ShareableResults } from './components/ShareableResults';
+import { huntAPI } from './api';
 
 export type UserRole = 'user' | 'creator';
 
@@ -58,110 +59,31 @@ function App() {
   const [completionScore, setCompletionScore] = useState<number | undefined>();
   const [completionTime, setCompletionTime] = useState<number | undefined>();
   const [userAnswers, setUserAnswers] = useState<UserAnswer[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Load hunts from localStorage on mount
+  // Load hunts from API on mount
   useEffect(() => {
-    const storedHunts = localStorage.getItem('questfinder_hunts');
-    if (storedHunts) {
-      setHunts(JSON.parse(storedHunts));
-    } else {
-      // Initialize with default hunts
-      const mockHunts: Hunt[] = [
-        {
-          id: '1',
-          title: 'Campus History Quest',
-          description: 'Discover the hidden stories behind our university landmarks',
-          creatorId: 'creator1',
-          thumbnail: 'https://images.unsplash.com/photo-1541339907198-e08756dedf3f?w=400',
-          locations: [
-            {
-              id: 'loc1',
-              name: 'Main Library',
-              lat: 40.7589,
-              lng: -73.9851,
-              clue: 'Where knowledge meets architecture. Find the year carved above the entrance.',
-              media: [
-                { type: 'image', url: 'https://images.unsplash.com/photo-1521587760476-6c12a4b040da?w=600' },
-                { type: 'text', content: 'Look carefully at the main entrance. The answer is a 4-digit year.' }
-              ],
-              answer: {
-                type: 'text',
-                correctAnswer: '1897'
-              },
-              unlocked: true
-            },
-            {
-              id: 'loc2',
-              name: 'Student Union',
-              lat: 40.7614,
-              lng: -73.9776,
-              clue: 'A place where students gather. What color is the famous mural on the third floor?',
-              media: [
-                { type: 'image', url: 'https://images.unsplash.com/photo-1523050854058-8df90110c9f1?w=600' },
-              ],
-              answer: {
-                type: 'multiple-choice',
-                correctAnswer: 'Blue',
-                options: ['Red', 'Blue', 'Green', 'Yellow']
-              },
-              unlocked: false
-            },
-            {
-              id: 'loc3',
-              name: 'Science Building',
-              lat: 40.7649,
-              lng: -73.9808,
-              clue: 'Innovation starts here. What element is featured in the sculpture outside?',
-              media: [
-                { type: 'text', content: 'Hint: It\'s the building block of life itself!' }
-              ],
-              answer: {
-                type: 'multiple-choice',
-                correctAnswer: 'Carbon',
-                options: ['Oxygen', 'Carbon', 'Hydrogen', 'Nitrogen']
-              },
-              unlocked: false
-            }
-          ]
-        },
-        {
-          id: '2',
-          title: 'Art & Culture Trail',
-          description: 'Follow the artistic soul of our campus through sculptures and murals',
-          creatorId: 'creator1',
-          thumbnail: 'https://images.unsplash.com/photo-1460661419201-fd4cecdf8a8b?w=400',
-          locations: [
-            {
-              id: 'loc4',
-              name: 'Sculpture Garden',
-              lat: 40.7580,
-              lng: -73.9855,
-              clue: 'Count the bronze figures in the garden',
-              media: [
-                { type: 'image', url: 'https://images.unsplash.com/photo-1518998053901-5348d3961a04?w=600' }
-              ],
-              answer: {
-                type: 'text',
-                correctAnswer: '7'
-              },
-              unlocked: true
-            }
-          ]
-        }
-      ];
-      localStorage.setItem('questfinder_hunts', JSON.stringify(mockHunts));
-      setHunts(mockHunts);
-    }
+    loadHunts();
   }, []);
 
-  // Save hunts to localStorage whenever they change
-  useEffect(() => {
-    if (hunts.length > 0) {
-      localStorage.setItem('questfinder_hunts', JSON.stringify(hunts));
+  const loadHunts = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const data = await huntAPI.getAll();
+      setHunts(data);
+    } catch (err) {
+      console.error('Failed to load hunts:', err);
+      setError('Failed to load hunts from server');
+      // Fallback to empty array instead of crashing
+      setHunts([]);
+    } finally {
+      setIsLoading(false);
     }
-  }, [hunts]);
+  };
 
-  // Restore user session
+  // Restore user session from localStorage
   useEffect(() => {
     const storedUser = localStorage.getItem('questfinder_user');
     if (storedUser) {
@@ -172,6 +94,8 @@ function App() {
       } else {
         setCurrentView('creator-dashboard');
       }
+    } else {
+      setIsLoading(false);
     }
   }, []);
 
@@ -193,7 +117,7 @@ function App() {
   };
 
   const handlePlayHunt = (hunt: Hunt) => {
-    // Load progress from localStorage
+    // Load progress from localStorage (progress stays local)
     const progressKey = `questfinder_progress_${hunt.id}`;
     const storedProgress = localStorage.getItem(progressKey);
     
@@ -225,29 +149,54 @@ function App() {
     }
   };
 
-  const handleSaveHunt = (hunt: Hunt) => {
-    if (selectedHunt) {
-      // Update existing hunt
-      setHunts(hunts.map(h => h.id === hunt.id ? hunt : h));
-    } else {
-      // Add new hunt
-      setHunts([...hunts, hunt]);
+  const handleSaveHunt = async (hunt: Hunt) => {
+    try {
+      if (selectedHunt) {
+        // Update existing hunt
+        await huntAPI.update(hunt.id, {
+          title: hunt.title,
+          description: hunt.description,
+          thumbnail: hunt.thumbnail,
+          locations: hunt.locations
+        });
+        setHunts(hunts.map(h => h.id === hunt.id ? hunt : h));
+      } else {
+        // Create new hunt
+        await huntAPI.create({
+          id: hunt.id,
+          title: hunt.title,
+          description: hunt.description,
+          creatorId: hunt.creatorId,
+          thumbnail: hunt.thumbnail,
+          locations: hunt.locations
+        });
+        setHunts([...hunts, hunt]);
+      }
+      handleBackToDashboard();
+    } catch (err) {
+      console.error('Failed to save hunt:', err);
+      alert('Failed to save hunt. Please try again.');
     }
-    handleBackToDashboard();
   };
 
-  const handleDeleteHunt = (huntId: string) => {
-    setHunts(hunts.filter(h => h.id !== huntId));
-    // Also clear any progress for this hunt
-    localStorage.removeItem(`questfinder_progress_${huntId}`);
+  const handleDeleteHunt = async (huntId: string) => {
+    try {
+      await huntAPI.delete(huntId);
+      setHunts(hunts.filter(h => h.id !== huntId));
+      // Also clear any progress for this hunt
+      localStorage.removeItem(`questfinder_progress_${huntId}`);
+    } catch (err) {
+      console.error('Failed to delete hunt:', err);
+      alert('Failed to delete hunt. Please try again.');
+    }
   };
 
   const handleUpdateHuntProgress = (updatedHunt: Hunt, startTime?: number) => {
-    // Update the hunt in the main list
-    setHunts(hunts.map(h => h.id === updatedHunt.id ? updatedHunt : h));
+    // Don't update the server, just update local state
+    // Progress is kept local per user
     setSelectedHunt(updatedHunt);
     
-    // Save progress to localStorage
+    // Save progress to localStorage only
     const progressKey = `questfinder_progress_${updatedHunt.id}`;
     const progressData = {
       hunt: updatedHunt,
@@ -277,6 +226,18 @@ function App() {
     setCurrentView('share-results');
   };
 
+  // Show loading state
+  if (isLoading && currentView === 'login') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-red-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-red-50">
       {currentView === 'login' && (
@@ -290,6 +251,8 @@ function App() {
           onPlayHunt={handlePlayHunt}
           onLogout={handleLogout}
           onViewLeaderboard={handleViewLeaderboard}
+          isLoading={isLoading}
+          error={error}
         />
       )}
 
