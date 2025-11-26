@@ -4,7 +4,10 @@
   import path from 'path';
 
   export default defineConfig({
-    base: '/scavenger-hunt-app-v2/',      
+    base: '/scavenger-hunt-app-v2/',
+  define: {
+    'import.meta.env.VITE_API_URL': JSON.stringify('https://scavenger-hunt-backend-production.up.railway.app/api')
+  },      
     plugins: [react()],
     resolve: {
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],

@@ -1,5 +1,8 @@
 // API configuration
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 
+  (import.meta.env.MODE === 'production' 
+    ? 'https://your-app.railway.app/api'
+    : 'http://localhost:3000/api');
 
 // Helper function for API calls
 async function apiCall(endpoint: string, options: RequestInit = {}) {
